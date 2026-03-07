@@ -1,0 +1,23 @@
+[project]
+name = "warmpool"
+version = "0.1.0"
+description = "Process pool with hard-kill timeouts and import warming"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["psutil>=5.9"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "scipy>=1.15.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
