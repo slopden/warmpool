@@ -26,17 +26,19 @@ def test_run_with_kwargs(pool):
 
 def test_subprocess_isolation(pool):
     child_pid = pool.run(get_pid, 5.0)
+    assert isinstance(child_pid, int)
     assert child_pid != os.getpid()
 
 
 def test_timeout_raises(pool):
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TimeoutError, match="sleep_forever"):
         pool.run(sleep_forever, 0.5)
 
 
 def test_hard_kill_verified(pool):
     child_pid = pool.run(get_pid, 5.0)
-    with pytest.raises(TimeoutError):
+    assert isinstance(child_pid, int)
+    with pytest.raises(TimeoutError, match="sleep_forever"):
         pool.run(sleep_forever, 0.5)
     # Worker should be dead
     with pytest.raises(OSError):
@@ -51,8 +53,8 @@ def test_error_propagation(pool):
 def test_exhaustion_without_spare():
     p = PoolWithTimeout(max_tasks=2, keep_spare=False)
     try:
-        p.run(add, 5.0, a=1, b=1)
-        p.run(add, 5.0, a=2, b=2)
+        assert p.run(add, 5.0, a=1, b=1) == 2
+        assert p.run(add, 5.0, a=2, b=2) == 4
         assert p.status is PoolStatus.EXHAUSTED
         with pytest.raises(ProcessPoolExhausted):
             p.run(add, 5.0, a=3, b=3)
@@ -67,14 +69,20 @@ def test_run_after_shutdown(pool):
         pool.run(add, 5.0, a=1, b=1)
 
 
+def test_double_shutdown(pool):
+    pool.shutdown()
+    pool.shutdown()  # should not raise
+    assert pool.status is PoolStatus.SHUTDOWN
+
+
 def test_multiple_sequential_tasks(pool):
     for i in range(5):
         assert pool.run(add, 5.0, a=i, b=i) == i * 2
 
 
 def test_elapsed_ms(pool):
-    pool.run(add, 5.0, a=1, b=2)
-    assert pool.last_elapsed_ms is not None
+    assert pool.run(add, 5.0, a=1, b=2) == 3
+    assert isinstance(pool.last_elapsed_ms, int)
     assert pool.last_elapsed_ms >= 0
 
 
@@ -89,7 +97,7 @@ def test_warm_modules():
 def test_worker_crash(pool):
     with pytest.raises(ProcessPoolExhausted) as exc_info:
         pool.run(force_exit, 5.0, code=1)
-    assert exc_info.value.exit_code is not None
+    assert exc_info.value.exit_code == 1
 
 
 @pytest.mark.asyncio
@@ -120,7 +128,7 @@ def test_kill_c_extension_blocked_worker():
         keep_spare=True,
     )
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError, match="scipy_eigh_huge"):
             # 0.5s timeout — LAPACK will be deep in C code by then
             p.run(scipy_eigh_huge, timeout=0.5, n=5000)
 

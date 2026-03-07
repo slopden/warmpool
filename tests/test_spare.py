@@ -15,10 +15,12 @@ def test_spare_created_on_init(spare_pool):
 def test_auto_rotation_on_exhaustion():
     p = PoolWithTimeout(max_tasks=2, keep_spare=True)
     try:
-        p.run(add, 5.0, a=1, b=1)
+        assert p.run(add, 5.0, a=1, b=1) == 2
         pid2 = p.run(get_pid, 5.0)
+        assert isinstance(pid2, int)
         # After 2 tasks the active worker should rotate
         pid3 = p.run(get_pid, 5.0)
+        assert isinstance(pid3, int)
         assert pid3 != pid2
     finally:
         p.shutdown()
@@ -27,7 +29,7 @@ def test_auto_rotation_on_exhaustion():
 def test_rotation_after_timeout():
     p = PoolWithTimeout(max_tasks=50, keep_spare=True)
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError, match="sleep_forever"):
             p.run(sleep_forever, 0.5)
         # Pool should still work via spare
         assert p.run(add, 5.0, a=1, b=2) == 3
@@ -47,7 +49,7 @@ def test_multiple_rotations():
 def test_spare_replenished():
     p = PoolWithTimeout(max_tasks=1, keep_spare=True)
     try:
-        p.run(add, 5.0, a=1, b=1)
+        assert p.run(add, 5.0, a=1, b=1) == 2
         # After rotation, spare should be replenished
         assert p._spare is not None
         assert p._spare.process.is_alive()
@@ -61,18 +63,20 @@ def test_rotation_faster_than_cold_start():
     cold = PoolWithTimeout(warm_modules=["json", "xml"], keep_spare=False)
     cold_time = time.perf_counter() - t0
     cold.shutdown()
+    assert cold_time > 0
 
     # Create a pool with spare already warming
     p = PoolWithTimeout(max_tasks=1, keep_spare=True, warm_modules=["json", "xml"])
     # Run a task to exhaust active and trigger promotion
-    p.run(add, 5.0, a=1, b=1)
+    assert p.run(add, 5.0, a=1, b=1) == 2
     # Give spare time to be ready
     time.sleep(0.5)
     # Time the promotion
     t0 = time.perf_counter()
-    p.run(add, 5.0, a=2, b=2)
+    assert p.run(add, 5.0, a=2, b=2) == 4
     spare_time = time.perf_counter() - t0
     p.shutdown()
+    assert spare_time > 0
 
     # Spare promotion should be faster than cold start
     assert spare_time < cold_time

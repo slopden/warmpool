@@ -8,6 +8,10 @@ Usage
 >>> pool.status is PoolStatus.READY
 True
 >>> pool.shutdown()
+
+Memory-based rotation:
+
+>>> pool = PoolWithTimeout(max_memory=500 * 1024 * 1024)
 """
 
 from ._exceptions import ProcessPoolExhausted

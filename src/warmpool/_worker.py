@@ -16,7 +16,9 @@ from multiprocessing.connection import Connection
 from ._logging import PipeHandler
 
 
-def _worker_process(conn: Connection, warm_modules: list[str], log_level: int = logging.DEBUG) -> None:
+def _worker_process(
+    conn: Connection, warm_modules: list[str], log_level: int = logging.DEBUG
+) -> None:
     """Entry point for the worker subprocess.
 
     Parameters

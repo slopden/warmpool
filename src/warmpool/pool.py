@@ -113,7 +113,7 @@ class WorkerHandle:
     child_conn: Connection
     ready: bool = False
     task_count: int = 0
-    last_metadata: dict = field(default_factory=dict)
+    last_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class PoolWithTimeout:
@@ -121,6 +121,10 @@ class PoolWithTimeout:
 
     Runs functions in a spawned subprocess that can be SIGKILLed when
     C-API code (OpenCASCADE, etc.) ignores Python signals.
+
+    .. note::
+        This class is **not** thread-safe.  Do not call :meth:`run` from
+        multiple threads concurrently.
 
     Parameters
     ----------
@@ -133,6 +137,11 @@ class PoolWithTimeout:
         rotation is near-instant.
     ready_timeout
         Seconds to wait for a worker to send its ``"ready"`` signal.
+    max_memory
+        Maximum RSS in bytes before the worker is rotated.
+    max_memory_percent
+        Maximum RSS as a fraction of total system memory (0.0–1.0)
+        before the worker is rotated.
     """
 
     def __init__(
@@ -141,17 +150,29 @@ class PoolWithTimeout:
         max_tasks: int = 50,
         keep_spare: bool = True,
         ready_timeout: float = 30.0,
+        max_memory: int | None = None,
+        max_memory_percent: float | None = None,
     ) -> None:
         self._warm_modules = warm_modules or []
         self._max_tasks = max_tasks
         self._keep_spare = keep_spare
         self._ready_timeout = ready_timeout
+        self._max_memory = max_memory
+        # Pre-compute absolute byte limit from percentage (avoid per-task psutil call).
+        if max_memory_percent is not None:
+            clamped = max(0.0, min(1.0, max_memory_percent))
+            self._max_memory_percent_bytes: int | None = int(
+                clamped * psutil.virtual_memory().total
+            )
+        else:
+            self._max_memory_percent_bytes = None
 
         self._active: WorkerHandle | None = None
         self._spare: WorkerHandle | None = None
         self._shutdown = False
         # Pool-level cache so elapsed_ms survives rotation.
         self._last_elapsed_ms: int | None = None
+        self._last_memory_rss: int | None = None
 
         _active_pools.add(self)
 
@@ -197,6 +218,14 @@ class PoolWithTimeout:
             ``None`` if no task has completed yet.
         """
         return self._last_elapsed_ms
+
+    @property
+    def last_memory_rss(self) -> int | None:
+        """RSS in bytes of the worker after the last completed task.
+
+        Returns ``None`` if no task has completed or memory checking is disabled.
+        """
+        return self._last_memory_rss
 
     def run(self, func: Callable, timeout: float, **kwargs: Any) -> Any:
         """Run *func* in the worker subprocess (blocking).
@@ -259,18 +288,25 @@ class PoolWithTimeout:
             self._kill_worker(handle)
             self._active = None
             if self._keep_spare:
-                self._promote_spare()
+                try:
+                    self._promote_spare()
+                except Exception:
+                    log.warning("Failed to promote spare after error", exc_info=True)
             raise
 
         # Persist elapsed_ms at pool level so it survives rotation.
         self._last_elapsed_ms = handle.last_metadata.get("elapsed_ms")
 
-        # Rotate after the final allowed task.
-        if handle.task_count >= self._max_tasks:
+        # Rotate after the final allowed task or memory limit exceeded.
+        memory_exceeded = self._exceeds_memory_limit(handle)
+        if handle.task_count >= self._max_tasks or memory_exceeded:
             self._shutdown_worker(handle)
             self._active = None
             if self._keep_spare:
-                self._promote_spare()
+                try:
+                    self._promote_spare()
+                except Exception:
+                    log.warning("Failed to promote spare after rotation", exc_info=True)
 
         return result
 
@@ -429,6 +465,29 @@ class PoolWithTimeout:
 
         raise TimeoutError(f"`{func.__name__}` timed out after {timeout}s")
 
+    def _exceeds_memory_limit(self, handle: WorkerHandle) -> bool:
+        if self._max_memory is None and self._max_memory_percent_bytes is None:
+            return False
+        try:
+            rss = psutil.Process(handle.process.pid).memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError):
+            return False
+        self._last_memory_rss = rss
+        if self._max_memory is not None and rss > self._max_memory:
+            log.info(
+                f"Worker pid={handle.process.pid} RSS {rss:,}B exceeds max_memory={self._max_memory:,}B, rotating"
+            )
+            return True
+        if (
+            self._max_memory_percent_bytes is not None
+            and rss > self._max_memory_percent_bytes
+        ):
+            log.info(
+                f"Worker pid={handle.process.pid} RSS {rss:,}B exceeds percent limit ({self._max_memory_percent_bytes:,}B), rotating"
+            )
+            return True
+        return False
+
     def _rotate_worker(self) -> None:
         """Shut down the spent active worker and promote the spare.
 
@@ -459,7 +518,11 @@ class PoolWithTimeout:
             self._active = self._start_worker(block_ready=True)
 
         # Replenish spare.
-        self._spare = self._start_worker(block_ready=False)
+        try:
+            self._spare = self._start_worker(block_ready=False)
+        except Exception:
+            log.warning("Failed to start spare worker", exc_info=True)
+            self._spare = None
 
     def _shutdown_worker(self, handle: WorkerHandle) -> None:
         """Gracefully shut down *handle*; escalate to kill if needed.

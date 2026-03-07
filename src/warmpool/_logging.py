@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import traceback
 from multiprocessing.connection import Connection
+from typing import Any
 
 
 class PipeHandler(logging.Handler):
@@ -55,7 +56,7 @@ class PipeHandler(logging.Handler):
 
 
 def forward_subprocess_log(
-    payload: dict,
+    payload: dict[str, Any],
     logger: logging.Logger | None = None,
 ) -> None:
     """Re-emit a subprocess log record via the parent's logging system.

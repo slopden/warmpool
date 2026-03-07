@@ -46,11 +46,8 @@ def log_with_exception():
         logging.getLogger("test.helper").exception("caught error")
 
 
-def log_multiple():
-    logger = logging.getLogger("test.helper")
-    logger.debug("debug msg")
-    logger.info("info msg")
-    logger.warning("warning msg")
+def sleep_short(seconds=0.01):
+    time.sleep(seconds)
 
 
 def check_module_imported(module_name="json"):
@@ -75,6 +72,16 @@ def raise_unpicklable():
         pass
 
     raise _Unpicklable("this can't be pickled")
+
+
+_memory_holder = None
+
+
+def allocate_memory(mb=100):
+    """Allocate ~mb megabytes of RSS that persists in the worker process."""
+    global _memory_holder
+    _memory_holder = bytearray(mb * 1024 * 1024)
+    return len(_memory_holder)
 
 
 def scipy_eigh_huge(n=5000):
