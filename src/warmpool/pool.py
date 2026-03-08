@@ -152,11 +152,13 @@ class PoolWithTimeout:
         ready_timeout: float = 30.0,
         max_memory: int | None = None,
         max_memory_percent: float | None = None,
+        init_func: Callable | None = None,
     ) -> None:
         self._warm_modules = warm_modules or []
         self._max_tasks = max_tasks
         self._keep_spare = keep_spare
         self._ready_timeout = ready_timeout
+        self._init_func = init_func
         self._max_memory = max_memory
         # Pre-compute absolute byte limit from percentage (avoid per-task psutil call).
         if max_memory_percent is not None:
@@ -363,11 +365,13 @@ class PoolWithTimeout:
         try:
             ctx = mp.get_context("spawn")
             proc = ctx.Process(
-                target=_worker_process, args=(child_conn, self._warm_modules, log_level)
+                target=_worker_process,
+                args=(child_conn, self._warm_modules, log_level, self._init_func),
             )
         except RuntimeError:
             proc = Process(
-                target=_worker_process, args=(child_conn, self._warm_modules, log_level)
+                target=_worker_process,
+                args=(child_conn, self._warm_modules, log_level, self._init_func),
             )
 
         proc.start()

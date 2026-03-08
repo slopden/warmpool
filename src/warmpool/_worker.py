@@ -12,12 +12,16 @@ import logging
 import time
 from importlib import import_module
 from multiprocessing.connection import Connection
+from typing import Callable
 
 from ._logging import PipeHandler
 
 
 def _worker_process(
-    conn: Connection, warm_modules: list[str], log_level: int = logging.DEBUG
+    conn: Connection,
+    warm_modules: list[str],
+    log_level: int = logging.DEBUG,
+    init_func: Callable | None = None,
 ) -> None:
     """Entry point for the worker subprocess.
 
@@ -45,6 +49,9 @@ def _worker_process(
             import_module(name)
         except ImportError:
             root.warning(f"Failed to warm module: {name}")
+
+    if init_func is not None:
+        init_func()
 
     conn.send(("ready", None, {}))
 
