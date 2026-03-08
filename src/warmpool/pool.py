@@ -375,17 +375,27 @@ class PoolWithTimeout:
         log.info(f"Started worker pid={proc.pid}")
 
         if block_ready:
-            self._wait_for_ready(handle)
+            if not self._wait_for_ready(handle):
+                self._kill_worker(handle)
+                raise RuntimeError(
+                    f"Worker pid={handle.process.pid} failed to become ready "
+                    f"within {self._ready_timeout}s"
+                )
 
         return handle
 
-    def _wait_for_ready(self, handle: WorkerHandle) -> None:
+    def _wait_for_ready(self, handle: WorkerHandle) -> bool:
         """Block until *handle* sends ``"ready"`` or the timeout expires.
 
         Parameters
         ----------
         handle
             The worker to wait on.
+
+        Returns
+        -------
+        bool
+            ``True`` if the worker became ready, ``False`` on timeout or error.
         """
         deadline = time.perf_counter() + self._ready_timeout
         while time.perf_counter() < deadline:
@@ -399,13 +409,14 @@ class PoolWithTimeout:
                     continue
                 if status == "ready":
                     handle.ready = True
-                    return
+                    return True
                 log.warning(f"Expected 'ready', got: {status}")
-                return
+                return False
             except Exception as e:
                 log.warning(f"Failed to receive ready signal: {e}")
-                return
+                return False
         log.warning("Worker didn't send ready signal within timeout")
+        return False
 
     def _wait_for_result(
         self, handle: WorkerHandle, func: Callable, timeout: float
@@ -501,14 +512,25 @@ class PoolWithTimeout:
     def _promote_spare(self) -> None:
         """Make the spare worker active and replenish the spare.
 
-        If the spare has died, falls back to a cold-start.
+        If the spare has died or never became ready (e.g. deadlocked
+        during warm-module import), it is killed and a fresh worker is
+        cold-started instead.
         """
         if self._spare is not None:
             if self._spare.process.is_alive():
                 if not self._spare.ready:
                     self._wait_for_ready(self._spare)
-                self._active = self._spare
-                self._spare = None
+                if self._spare.ready:
+                    self._active = self._spare
+                    self._spare = None
+                else:
+                    # Spare is alive but never became ready — kill it.
+                    log.warning(
+                        f"Spare pid={self._spare.process.pid} never became ready, killing"
+                    )
+                    self._kill_worker(self._spare)
+                    self._spare = None
+                    self._active = self._start_worker(block_ready=True)
             else:
                 # Spare died — clean up and cold-start.
                 self._close_worker(self._spare)

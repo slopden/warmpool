@@ -77,6 +77,17 @@ def raise_unpicklable():
 _memory_holder = None
 
 
+def hung_worker_process(conn, warm_modules, log_level):
+    """Simulate a worker stuck in module import — never sends 'ready'.
+
+    Reproduces the scenario where GPU initialization deadlocks during
+    warm-module import (e.g. two subprocesses calling pollster::block_on
+    simultaneously).
+    """
+    conn.close()
+    time.sleep(3600)
+
+
 def allocate_memory(mb=100):
     """Allocate ~mb megabytes of RSS that persists in the worker process."""
     global _memory_holder
