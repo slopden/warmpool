@@ -114,6 +114,7 @@ class WorkerHandle:
     ready: bool = False
     task_count: int = 0
     last_metadata: dict[str, Any] = field(default_factory=dict)
+    init_result: Any = None
 
 
 class PoolWithTimeout:
@@ -209,6 +210,11 @@ class PoolWithTimeout:
         if self._keep_spare:
             return PoolStatus.NEEDS_ROTATION
         return PoolStatus.EXHAUSTED
+
+    @property
+    def init_result(self) -> Any:
+        """Return value of ``init_func`` from the active worker, or ``None``."""
+        return self._active.init_result if self._active else None
 
     @property
     def last_elapsed_ms(self) -> int | None:
@@ -413,6 +419,7 @@ class PoolWithTimeout:
                     continue
                 if status == "ready":
                     handle.ready = True
+                    handle.init_result = payload
                     return True
                 log.warning(f"Expected 'ready', got: {status}")
                 return False

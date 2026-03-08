@@ -50,10 +50,8 @@ def _worker_process(
         except ImportError:
             root.warning(f"Failed to warm module: {name}")
 
-    if init_func is not None:
-        init_func()
-
-    conn.send(("ready", None, {}))
+    init_result = init_func() if init_func is not None else None
+    conn.send(("ready", init_result, {}))
 
     try:
         while True:
