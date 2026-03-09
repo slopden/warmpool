@@ -154,6 +154,7 @@ class PoolWithTimeout:
         max_memory: int | None = None,
         max_memory_percent: float | None = None,
         init_func: Callable | None = None,
+        init_retries: int = 1,
     ) -> None:
         self._warm_modules = warm_modules or []
         self._max_tasks = max_tasks
@@ -161,6 +162,7 @@ class PoolWithTimeout:
         self._ready_timeout = ready_timeout
         self._init_func = init_func
         self._max_memory = max_memory
+        self._init_retries = init_retries
         # Pre-compute absolute byte limit from percentage (avoid per-task psutil call).
         if max_memory_percent is not None:
             clamped = max(0.0, min(1.0, max_memory_percent))
@@ -179,8 +181,20 @@ class PoolWithTimeout:
 
         _active_pools.add(self)
 
-        # Start primary worker (blocking).
-        self._active = self._start_worker(block_ready=True)
+        # Start primary worker (blocking), with retry.
+        for attempt in range(1 + self._init_retries):
+            try:
+                self._active = self._start_worker(block_ready=True)
+                break
+            except RuntimeError:
+                if attempt < self._init_retries:
+                    log.warning(
+                        "Primary worker failed to become ready, "
+                        f"retrying ({attempt + 1}/{self._init_retries})..."
+                    )
+                    time.sleep(5)
+                else:
+                    raise
 
         # Start spare (non-blocking) if requested.
         if self._keep_spare:
