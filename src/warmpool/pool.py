@@ -12,7 +12,7 @@ import asyncio
 import atexit
 import enum
 import logging
-import multiprocessing as mp
+import multiprocessing
 import time
 import weakref
 from dataclasses import dataclass, field
@@ -35,7 +35,7 @@ _JOIN_TIMEOUT = 0.5
 # Seconds to wait for a process tree to die after SIGKILL.
 _KILL_WAIT = 1.0
 
-_active_pools: weakref.WeakSet[PoolWithTimeout] = weakref.WeakSet()
+_active_pools: weakref.WeakSet[WarmPool] = weakref.WeakSet()
 
 
 def _cleanup_all_pools() -> None:
@@ -53,7 +53,7 @@ atexit.register(_cleanup_all_pools)
 class PoolStatus(enum.Enum):
     """The pool's readiness state.
 
-    Returned by :attr:`PoolWithTimeout.status`.  Every decision point
+    Returned by :attr:`WarmPool.status`.  Every decision point
     in the pool dispatches on this enum with :func:`_assert_never` in
     the ``else`` branch so that mypy proves exhaustive handling.
 
@@ -95,9 +95,9 @@ class WorkerHandle:
     ----------
     process
         The :class:`multiprocessing.Process` instance.
-    conn
+    connection
         Parent-side pipe connection.
-    child_conn
+    child_connection
         Child-side pipe connection (kept open so we can close it on
         cleanup).
     ready
@@ -108,16 +108,16 @@ class WorkerHandle:
         Metadata dict from the most recent completed task.
     """
 
-    process: mp.Process
-    conn: Connection
-    child_conn: Connection
+    process: multiprocessing.Process
+    connection: Connection
+    child_connection: Connection
     ready: bool = False
     task_count: int = 0
     last_metadata: dict[str, Any] = field(default_factory=dict)
     init_result: Any = None
 
 
-class PoolWithTimeout:
+class WarmPool:
     """Single-worker subprocess pool with hard-kill timeouts.
 
     Runs functions in a spawned subprocess that can be SIGKILLed when
@@ -129,8 +129,10 @@ class PoolWithTimeout:
 
     Parameters
     ----------
-    warm_modules
-        Module names to pre-import in the worker on startup.
+    warming
+        Optional callable invoked once per worker on startup (e.g. to
+        pre-import modules).  Its return value is available via
+        :attr:`init_result`.
     max_tasks
         Maximum tasks a single worker may handle before rotation.
     keep_spare
@@ -147,20 +149,18 @@ class PoolWithTimeout:
 
     def __init__(
         self,
-        warm_modules: list[str] | None = None,
         max_tasks: int = 50,
         keep_spare: bool = True,
         ready_timeout: float = 30.0,
         max_memory: int | None = None,
-        max_memory_percent: float | None = None,
-        init_func: Callable | None = None,
+        max_memory_percent: float | None = 0.35,
+        warming: Callable | None = None,
         init_retries: int = 1,
     ) -> None:
-        self._warm_modules = warm_modules or []
         self._max_tasks = max_tasks
         self._keep_spare = keep_spare
         self._ready_timeout = ready_timeout
-        self._init_func = init_func
+        self._warming = warming
         self._max_memory = max_memory
         self._init_retries = init_retries
         # Pre-compute absolute byte limit from percentage (avoid per-task psutil call).
@@ -227,7 +227,7 @@ class PoolWithTimeout:
 
     @property
     def init_result(self) -> Any:
-        """Return value of ``init_func`` from the active worker, or ``None``."""
+        """Return value of ``warming`` from the active worker, or ``None``."""
         return self._active.init_result if self._active else None
 
     @property
@@ -249,23 +249,23 @@ class PoolWithTimeout:
         """
         return self._last_memory_rss
 
-    def run(self, func: Callable, timeout: float, **kwargs: Any) -> Any:
-        """Run *func* in the worker subprocess (blocking).
+    def run(self, function: Callable, timeout: float, **kwargs: Any) -> Any:
+        """Run *function* in the worker subprocess (blocking).
 
         Parameters
         ----------
-        func
+        function
             A picklable callable to execute in the worker.
         timeout
             Hard timeout in seconds; the worker is SIGKILLed if it
             exceeds this.
         **kwargs
-            Keyword arguments forwarded to *func*.
+            Keyword arguments forwarded to *function*.
 
         Returns
         -------
         Any
-            Whatever *func* returns.
+            Whatever *function* returns.
 
         Raises
         ------
@@ -300,12 +300,12 @@ class PoolWithTimeout:
         assert handle is not None  # narrowing for mypy
 
         # Send the task.
-        handle.conn.send((func, (), kwargs))
+        handle.connection.send((function, (), kwargs))
         handle.task_count += 1
 
         # Wait for result.
         try:
-            result = self._wait_for_result(handle, func, timeout)
+            result = self._wait_for_result(handle, function, timeout)
         except (TimeoutError, ProcessPoolExhausted):
             self._kill_worker(handle)
             self._active = None
@@ -332,26 +332,26 @@ class PoolWithTimeout:
 
         return result
 
-    async def arun(self, func: Callable, timeout: float, **kwargs: Any) -> Any:
+    async def arun(self, function: Callable, timeout: float, **kwargs: Any) -> Any:
         """Async wrapper around :meth:`run`.
 
         Parameters
         ----------
-        func
+        function
             A picklable callable.
         timeout
             Hard timeout in seconds.
         **kwargs
-            Forwarded to *func*.
+            Forwarded to *function*.
 
         Returns
         -------
         Any
-            Whatever *func* returns.
+            Whatever *function* returns.
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, lambda: self.run(func, timeout, **kwargs)
+            None, lambda: self.run(function, timeout, **kwargs)
         )
 
     def shutdown(self) -> None:
@@ -380,23 +380,27 @@ class PoolWithTimeout:
         -------
         WorkerHandle
         """
-        parent_conn, child_conn = Pipe()
+        parent_connection, child_connection = Pipe()
         log_level = logging.getLogger().getEffectiveLevel()
         try:
-            ctx = mp.get_context("spawn")
-            proc = ctx.Process(
+            context = multiprocessing.get_context("spawn")
+            process = context.Process(
                 target=_worker_process,
-                args=(child_conn, self._warm_modules, log_level, self._init_func),
+                args=(child_connection, log_level, self._warming),
             )
         except RuntimeError:
-            proc = Process(
+            process = Process(
                 target=_worker_process,
-                args=(child_conn, self._warm_modules, log_level, self._init_func),
+                args=(child_connection, log_level, self._warming),
             )
 
-        proc.start()
-        handle = WorkerHandle(process=proc, conn=parent_conn, child_conn=child_conn)
-        log.info(f"Started worker pid={proc.pid}")
+        process.start()
+        handle = WorkerHandle(
+            process=process,
+            connection=parent_connection,
+            child_connection=child_connection,
+        )
+        log.info(f"Started worker pid={process.pid}")
 
         if block_ready:
             if not self._wait_for_ready(handle):
@@ -424,10 +428,10 @@ class PoolWithTimeout:
         deadline = time.perf_counter() + self._ready_timeout
         while time.perf_counter() < deadline:
             remaining = max(0.01, deadline - time.perf_counter())
-            if not handle.conn.poll(timeout=remaining):
+            if not handle.connection.poll(timeout=remaining):
                 break
             try:
-                status, payload, _ = handle.conn.recv()
+                status, payload, _ = handle.connection.recv()
                 if status == "log":
                     forward_subprocess_log(payload)
                     continue
@@ -437,14 +441,14 @@ class PoolWithTimeout:
                     return True
                 log.warning(f"Expected 'ready', got: {status}")
                 return False
-            except Exception as e:
-                log.warning(f"Failed to receive ready signal: {e}")
+            except Exception as error:
+                log.warning(f"Failed to receive ready signal: {error}")
                 return False
         log.warning("Worker didn't send ready signal within timeout")
         return False
 
     def _wait_for_result(
-        self, handle: WorkerHandle, func: Callable, timeout: float
+        self, handle: WorkerHandle, function: Callable, timeout: float
     ) -> Any:
         """Poll *handle* for the task result, forwarding log messages.
 
@@ -452,7 +456,7 @@ class PoolWithTimeout:
         ----------
         handle
             The active worker handle.
-        func
+        function
             The function that was dispatched (used for error messages).
         timeout
             Hard timeout in seconds.
@@ -460,7 +464,7 @@ class PoolWithTimeout:
         Returns
         -------
         Any
-            The return value of *func*.
+            The return value of *function*.
 
         Raises
         ------
@@ -471,14 +475,14 @@ class PoolWithTimeout:
         """
         start = time.perf_counter()
         while time.perf_counter() - start < timeout:
-            if handle.conn.poll(timeout=_POLL_TIMEOUT):
+            if handle.connection.poll(timeout=_POLL_TIMEOUT):
                 try:
-                    status, payload, metadata = handle.conn.recv()
+                    status, payload, metadata = handle.connection.recv()
                 except (EOFError, BrokenPipeError):
-                    ec = handle.process.exitcode
+                    exit_code = handle.process.exitcode
                     raise ProcessPoolExhausted(
-                        f"Subprocess died during `{func.__name__}`",
-                        exit_code=ec,
+                        f"Subprocess died during `{function.__name__}`",
+                        exit_code=exit_code,
                     )
 
                 if status == "log":
@@ -493,13 +497,13 @@ class PoolWithTimeout:
                     raise payload
 
             if not handle.process.is_alive():
-                ec = handle.process.exitcode
+                exit_code = handle.process.exitcode
                 raise ProcessPoolExhausted(
-                    f"Subprocess died during `{func.__name__}`",
-                    exit_code=ec,
+                    f"Subprocess died during `{function.__name__}`",
+                    exit_code=exit_code,
                 )
 
-        raise TimeoutError(f"`{func.__name__}` timed out after {timeout}s")
+        raise TimeoutError(f"`{function.__name__}` timed out after {timeout}s")
 
     def _exceeds_memory_limit(self, handle: WorkerHandle) -> bool:
         if self._max_memory is None and self._max_memory_percent_bytes is None:
@@ -538,7 +542,7 @@ class PoolWithTimeout:
         """Make the spare worker active and replenish the spare.
 
         If the spare has died or never became ready (e.g. deadlocked
-        during warm-module import), it is killed and a fresh worker is
+        during warming), it is killed and a fresh worker is
         cold-started instead.
         """
         if self._spare is not None:
@@ -581,7 +585,7 @@ class PoolWithTimeout:
         """
         if handle.process.is_alive():
             try:
-                handle.conn.send((None, (), {}))
+                handle.connection.send((None, (), {}))
             except (BrokenPipeError, OSError):
                 pass
             handle.process.join(timeout=_JOIN_TIMEOUT)
@@ -602,14 +606,14 @@ class PoolWithTimeout:
             self._close_worker(handle)
             return
         try:
-            proc = psutil.Process(handle.process.pid)
-            children = proc.children(recursive=True)
+            worker = psutil.Process(handle.process.pid)
+            children = worker.children(recursive=True)
             for child in children:
                 child.terminate()
-            proc.terminate()
-            gone, alive = psutil.wait_procs(children + [proc], timeout=0.1)
-            for p in alive:
-                p.kill()
+            worker.terminate()
+            gone, alive = psutil.wait_procs(children + [worker], timeout=0.1)
+            for remaining in alive:
+                remaining.kill()
             psutil.wait_procs(alive, timeout=_KILL_WAIT)
         except (psutil.NoSuchProcess, ProcessLookupError):
             pass
@@ -629,10 +633,10 @@ class PoolWithTimeout:
         """
         handle.process.join(timeout=_POLL_TIMEOUT)
         try:
-            handle.conn.close()
+            handle.connection.close()
         except Exception:
             pass
         try:
-            handle.child_conn.close()
+            handle.child_connection.close()
         except Exception:
             pass

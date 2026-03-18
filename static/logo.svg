@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 160" width="480" height="160">
+  <defs>
+    <linearGradient id="poolGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b35"/>
+      <stop offset="100%" stop-color="#ff3d00"/>
+    </linearGradient>
+    <linearGradient id="steam1" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#ff6b35" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ff6b35" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Hot pool icon -->
+  <g transform="translate(28, 30)">
+    <!-- Steam wisps -->
+    <path d="M30 40 Q25 25, 30 10" stroke="url(#steam1)" stroke-width="3" fill="none" stroke-linecap="round">
+      <animate attributeName="d" values="M30 40 Q25 25, 30 10;M30 40 Q35 25, 30 10;M30 40 Q25 25, 30 10" dur="2s" repeatCount="indefinite"/>
+    </path>
+    <path d="M50 35 Q45 20, 50 5" stroke="url(#steam1)" stroke-width="3" fill="none" stroke-linecap="round">
+      <animate attributeName="d" values="M50 35 Q45 20, 50 5;M50 35 Q55 20, 50 5;M50 35 Q45 20, 50 5" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M70 40 Q65 25, 70 10" stroke="url(#steam1)" stroke-width="3" fill="none" stroke-linecap="round">
+      <animate attributeName="d" values="M70 40 Q65 25, 70 10;M70 40 Q75 25, 70 10;M70 40 Q65 25, 70 10" dur="1.8s" repeatCount="indefinite"/>
+    </path>
+
+    <!-- Pool basin -->
+    <ellipse cx="50" cy="65" rx="45" ry="14" fill="url(#poolGrad)" opacity="0.15"/>
+    <path d="M5 55 Q5 80, 50 80 Q95 80, 95 55" stroke="url(#poolGrad)" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <!-- Water surface -->
+    <ellipse cx="50" cy="55" rx="44" ry="12" fill="url(#poolGrad)" opacity="0.25"/>
+    <path d="M8 55 Q30 48, 50 55 Q70 62, 92 55" stroke="url(#poolGrad)" stroke-width="2.5" fill="none" stroke-linecap="round" opacity="0.6">
+      <animate attributeName="d" values="M8 55 Q30 48, 50 55 Q70 62, 92 55;M8 55 Q30 62, 50 55 Q70 48, 92 55;M8 55 Q30 48, 50 55 Q70 62, 92 55" dur="3s" repeatCount="indefinite"/>
+    </path>
+  </g>
+
+  <!-- Text -->
+  <text x="148" y="102" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="62" font-weight="700" fill="#1a1a2e" letter-spacing="-2">warm<tspan fill="url(#poolGrad)">pool</tspan></text>
+
+  <!-- Tagline -->
+  <text x="150" y="128" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#666" letter-spacing="0.5">subprocess pool with teeth</text>
+</svg>

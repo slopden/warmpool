@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from warmpool import PoolStatus, PoolWithTimeout, ProcessPoolExhausted
+from warmpool import PoolStatus, WarmPool, ProcessPoolExhausted
 
 from ._helpers import (
     add,
@@ -13,6 +13,8 @@ from ._helpers import (
     raise_value_error,
     scipy_eigh_huge,
     sleep_forever,
+    warm_json,
+    warm_numpy_scipy,
 )
 
 
@@ -47,19 +49,19 @@ def test_hard_kill_verified(pool):
 
 def test_error_propagation(pool):
     with pytest.raises(ValueError, match="boom"):
-        pool.run(raise_value_error, 5.0, msg="boom")
+        pool.run(raise_value_error, 5.0, message="boom")
 
 
 def test_exhaustion_without_spare():
-    p = PoolWithTimeout(max_tasks=2, keep_spare=False)
+    pool = WarmPool(max_tasks=2, keep_spare=False)
     try:
-        assert p.run(add, 5.0, a=1, b=1) == 2
-        assert p.run(add, 5.0, a=2, b=2) == 4
-        assert p.status is PoolStatus.EXHAUSTED
+        assert pool.run(add, 5.0, a=1, b=1) == 2
+        assert pool.run(add, 5.0, a=2, b=2) == 4
+        assert pool.status is PoolStatus.EXHAUSTED
         with pytest.raises(ProcessPoolExhausted):
-            p.run(add, 5.0, a=3, b=3)
+            pool.run(add, 5.0, a=3, b=3)
     finally:
-        p.shutdown()
+        pool.shutdown()
 
 
 def test_run_after_shutdown(pool):
@@ -86,12 +88,12 @@ def test_elapsed_ms(pool):
     assert pool.last_elapsed_ms >= 0
 
 
-def test_warm_modules():
-    p = PoolWithTimeout(warm_modules=["json"])
+def test_warming():
+    pool = WarmPool(warming=warm_json)
     try:
-        assert p.run(check_module_imported, 5.0, module_name="json") is True
+        assert pool.run(check_module_imported, 5.0, module_name="json") is True
     finally:
-        p.shutdown()
+        pool.shutdown()
 
 
 def test_worker_crash(pool):
@@ -102,12 +104,12 @@ def test_worker_crash(pool):
 
 @pytest.mark.asyncio
 async def test_arun():
-    p = PoolWithTimeout()
+    pool = WarmPool()
     try:
-        result = await p.arun(add, 5.0, a=1, b=2)
+        result = await pool.arun(add, 5.0, a=1, b=2)
         assert result == 3
     finally:
-        p.shutdown()
+        pool.shutdown()
 
 
 def test_unpicklable_exception(pool):
@@ -123,16 +125,16 @@ def test_kill_c_extension_blocked_worker():
     in Fortran/C with the GIL held, so Python signal handlers never fire.
     The pool's hard-kill (SIGKILL via psutil) is the only way to stop it.
     """
-    p = PoolWithTimeout(
-        warm_modules=["numpy", "scipy.linalg"],
+    pool = WarmPool(
+        warming=warm_numpy_scipy,
         keep_spare=True,
     )
     try:
         with pytest.raises(TimeoutError, match="scipy_eigh_huge"):
             # 0.5s timeout — LAPACK will be deep in C code by then
-            p.run(scipy_eigh_huge, timeout=0.5, n=5000)
+            pool.run(scipy_eigh_huge, timeout=0.5, n=5000)
 
         # Pool recovered via spare — prove it still works.
-        assert p.run(add, 5.0, a=7, b=8) == 15
+        assert pool.run(add, 5.0, a=7, b=8) == 15
     finally:
-        p.shutdown()
+        pool.shutdown()
