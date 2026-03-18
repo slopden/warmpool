@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from warmpool import PoolStatus, PoolWithTimeout, ProcessPoolExhausted
+from warmpool import PoolStatus, WarmPool, ProcessPoolExhausted
 
 from ._helpers import (
     add,
@@ -53,7 +53,7 @@ def test_error_propagation(pool):
 
 
 def test_exhaustion_without_spare():
-    pool = PoolWithTimeout(max_tasks=2, keep_spare=False)
+    pool = WarmPool(max_tasks=2, keep_spare=False)
     try:
         assert pool.run(add, 5.0, a=1, b=1) == 2
         assert pool.run(add, 5.0, a=2, b=2) == 4
@@ -89,7 +89,7 @@ def test_elapsed_ms(pool):
 
 
 def test_warming():
-    pool = PoolWithTimeout(warming=warm_json)
+    pool = WarmPool(warming=warm_json)
     try:
         assert pool.run(check_module_imported, 5.0, module_name="json") is True
     finally:
@@ -104,7 +104,7 @@ def test_worker_crash(pool):
 
 @pytest.mark.asyncio
 async def test_arun():
-    pool = PoolWithTimeout()
+    pool = WarmPool()
     try:
         result = await pool.arun(add, 5.0, a=1, b=2)
         assert result == 3
@@ -125,7 +125,7 @@ def test_kill_c_extension_blocked_worker():
     in Fortran/C with the GIL held, so Python signal handlers never fire.
     The pool's hard-kill (SIGKILL via psutil) is the only way to stop it.
     """
-    pool = PoolWithTimeout(
+    pool = WarmPool(
         warming=warm_numpy_scipy,
         keep_spare=True,
     )

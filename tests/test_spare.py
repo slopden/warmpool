@@ -5,7 +5,7 @@ from multiprocessing import Pipe
 import psutil
 import pytest
 
-from warmpool import PoolWithTimeout
+from warmpool import WarmPool
 from warmpool.pool import WorkerHandle
 
 from ._helpers import add, get_pid, hung_worker_process, sleep_forever, warm_json_xml
@@ -17,7 +17,7 @@ def test_spare_created_on_init(spare_pool):
 
 
 def test_auto_rotation_on_exhaustion():
-    pool = PoolWithTimeout(max_tasks=2, keep_spare=True)
+    pool = WarmPool(max_tasks=2, keep_spare=True)
     try:
         assert pool.run(add, 5.0, a=1, b=1) == 2
         pid2 = pool.run(get_pid, 5.0)
@@ -31,7 +31,7 @@ def test_auto_rotation_on_exhaustion():
 
 
 def test_rotation_after_timeout():
-    pool = PoolWithTimeout(max_tasks=50, keep_spare=True)
+    pool = WarmPool(max_tasks=50, keep_spare=True)
     try:
         with pytest.raises(TimeoutError, match="sleep_forever"):
             pool.run(sleep_forever, 0.5)
@@ -42,7 +42,7 @@ def test_rotation_after_timeout():
 
 
 def test_multiple_rotations():
-    pool = PoolWithTimeout(max_tasks=1, keep_spare=True)
+    pool = WarmPool(max_tasks=1, keep_spare=True)
     try:
         for i in range(5):
             assert pool.run(add, 5.0, a=i, b=1) == i + 1
@@ -51,7 +51,7 @@ def test_multiple_rotations():
 
 
 def test_spare_replenished():
-    pool = PoolWithTimeout(max_tasks=1, keep_spare=True)
+    pool = WarmPool(max_tasks=1, keep_spare=True)
     try:
         assert pool.run(add, 5.0, a=1, b=1) == 2
         # After rotation, spare should be replenished
@@ -64,13 +64,13 @@ def test_spare_replenished():
 def test_rotation_faster_than_cold_start():
     # Time a cold-start pool creation
     start = time.perf_counter()
-    cold = PoolWithTimeout(warming=warm_json_xml, keep_spare=False)
+    cold = WarmPool(warming=warm_json_xml, keep_spare=False)
     cold_time = time.perf_counter() - start
     cold.shutdown()
     assert cold_time > 0
 
     # Create a pool with spare already warming
-    pool = PoolWithTimeout(max_tasks=1, keep_spare=True, warming=warm_json_xml)
+    pool = WarmPool(max_tasks=1, keep_spare=True, warming=warm_json_xml)
     # Run a task to exhaust active and trigger promotion
     assert pool.run(add, 5.0, a=1, b=1) == 2
     # Give spare time to be ready
@@ -90,7 +90,7 @@ def test_spare_hung_during_import_is_killed():
     """Spare that never sends 'ready' is killed on promotion and replaced
     with a cold-started worker.
     """
-    pool = PoolWithTimeout(max_tasks=1, keep_spare=True, ready_timeout=0.2)
+    pool = WarmPool(max_tasks=1, keep_spare=True, ready_timeout=0.2)
     try:
         # Replace the spare with a process that never sends "ready".
         pool._shutdown_worker(pool._spare)
@@ -130,7 +130,7 @@ def test_spare_hung_during_import_is_killed():
 
 def test_wait_for_ready_returns_false_on_timeout():
     """_wait_for_ready returns False when the worker never sends 'ready'."""
-    pool = PoolWithTimeout(max_tasks=1, keep_spare=False, ready_timeout=0.2)
+    pool = WarmPool(max_tasks=1, keep_spare=False, ready_timeout=0.2)
     try:
         parent_connection, child_connection = Pipe()
         context = multiprocessing.get_context("spawn")

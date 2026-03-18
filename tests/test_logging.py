@@ -3,7 +3,7 @@ from multiprocessing import Pipe
 
 
 from warmpool._logging import PipeHandler, forward_subprocess_log
-from warmpool import PoolWithTimeout
+from warmpool import WarmPool
 
 from ._helpers import log_message, log_with_exception
 
@@ -108,7 +108,7 @@ class TestIntegrationLogs:
         orig_level = root.level
         root.setLevel(logging.DEBUG)
         try:
-            pool = PoolWithTimeout(max_tasks=50, keep_spare=False)
+            pool = WarmPool(max_tasks=50, keep_spare=False)
             try:
                 with caplog.at_level(logging.DEBUG, logger="warmpool.subprocess"):
                     pool.run(log_message, 5.0, message="hello from child")

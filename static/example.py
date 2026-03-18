@@ -17,7 +17,7 @@ Run with:
 import logging
 import time
 
-from warmpool import PoolWithTimeout
+from warmpool import WarmPool
 
 # ── Set up root logger so we see both parent and forwarded child logs ──
 logging.basicConfig(
@@ -68,7 +68,7 @@ def warm_imports():
 
 def main():
     log.info("creating pool with keep_spare=True, warming numpy+scipy")
-    pool = PoolWithTimeout(
+    pool = WarmPool(
         warming=warm_imports,
         max_tasks=50,
         keep_spare=True,

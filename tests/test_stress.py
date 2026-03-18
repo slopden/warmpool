@@ -1,13 +1,13 @@
 import pytest
 
-from warmpool import PoolWithTimeout
+from warmpool import WarmPool
 
 from ._helpers import add, sleep_forever
 
 
 def test_stress_mixed_calls():
     """1000 calls with max_tasks=50, mixing success and timeout."""
-    pool = PoolWithTimeout(max_tasks=50, keep_spare=True)
+    pool = WarmPool(max_tasks=50, keep_spare=True)
     try:
         successes = 0
         timeouts = 0
@@ -32,7 +32,7 @@ def test_stress_mixed_calls():
 
 def test_stress_rapid_fire():
     """1000 fast calls to verify no resource leaks or pipe desync."""
-    pool = PoolWithTimeout(max_tasks=50, keep_spare=True)
+    pool = WarmPool(max_tasks=50, keep_spare=True)
     try:
         for i in range(1000):
             assert pool.run(add, 5.0, a=i, b=i) == i * 2

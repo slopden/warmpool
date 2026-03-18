@@ -5,7 +5,7 @@ class ProcessPoolExhausted(Exception):
     """The worker process is dead or has hit its task limit.
 
     When ``keep_spare=False``, the caller must create a new
-    :class:`~warmpool.PoolWithTimeout` instance to continue.
+    :class:`~warmpool.WarmPool` instance to continue.
 
     Parameters
     ----------

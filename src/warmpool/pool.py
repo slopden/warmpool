@@ -35,7 +35,7 @@ _JOIN_TIMEOUT = 0.5
 # Seconds to wait for a process tree to die after SIGKILL.
 _KILL_WAIT = 1.0
 
-_active_pools: weakref.WeakSet[PoolWithTimeout] = weakref.WeakSet()
+_active_pools: weakref.WeakSet[WarmPool] = weakref.WeakSet()
 
 
 def _cleanup_all_pools() -> None:
@@ -53,7 +53,7 @@ atexit.register(_cleanup_all_pools)
 class PoolStatus(enum.Enum):
     """The pool's readiness state.
 
-    Returned by :attr:`PoolWithTimeout.status`.  Every decision point
+    Returned by :attr:`WarmPool.status`.  Every decision point
     in the pool dispatches on this enum with :func:`_assert_never` in
     the ``else`` branch so that mypy proves exhaustive handling.
 
@@ -117,7 +117,7 @@ class WorkerHandle:
     init_result: Any = None
 
 
-class PoolWithTimeout:
+class WarmPool:
     """Single-worker subprocess pool with hard-kill timeouts.
 
     Runs functions in a spawned subprocess that can be SIGKILLed when

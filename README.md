@@ -1,14 +1,29 @@
-# warmpool
+<p align="center">
+  <img src="static/logo.svg" alt="warmpool" width="480">
+</p>
 
-A "ProcessPool-like-executor" with hard-kill timeouts and import warming. The basic problem is if you freeze up deep in a C-extension most of the Python timeout-handling stuff doesn't work. `warmpool` runs functions in a SINGLE subprocess, and if they exceed their timeout it SIGTERM+SIGKILL's them and all of their children (if the C extension has spawned anything).
+<p align="center">
+  <strong>A single-worker subprocess pool that can actually kill C extensions.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/warmpool/"><img alt="PyPI" src="https://img.shields.io/pypi/v/warmpool?color=ff6b35"></a>
+  <a href="https://github.com/slopden/warmpool/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/slopden/warmpool?color=ff3d00"></a>
+  <img alt="Python" src="https://img.shields.io/pypi/pyversions/warmpool?color=1a1a2e">
+</p>
+
+---
+
+A "ProcessPool-like-executor" with hard-kill timeouts and import warming. The basic problem is that if you freeze up deep in a C-extension Python timeout-handling stuff doesn't work. `warmpool` runs functions in a spawned subprocess, and if they exceed their timeout it SIGTERM+SIGKILL the process and all children if the C extension has spawned anything.
 
 - It calls a "warming function" in each new process, so you can have it keep a process warmed with `import scipy, numpy, etc` which can easily be 2+ seconds.
+- The timeouts actually work regardless of what happens in the function.
 - It has an option to keep a spare process warm in the background so it can rotate cleanly without eating an import period.
 - It sends logs back to the parent through a pipe.
 
 ```python
 import time
-from warmpool import PoolWithTimeout
+from warmpool import WarmPool
 
 def warm_imports():
     import numpy
@@ -25,7 +40,7 @@ def eigh_huge(n=5000):
 def add(a=0, b=0):
     return a + b
 
-pool = PoolWithTimeout(warming=warm_imports)
+pool = WarmPool(warming=warm_imports)
 
 # numpy+scipy are already imported — no 2s wait
 start = time.perf_counter()

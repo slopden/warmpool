@@ -2,8 +2,8 @@
 
 Usage
 -----
->>> from warmpool import PoolWithTimeout, PoolStatus
->>> pool = PoolWithTimeout(max_tasks=100, keep_spare=True)
+>>> from warmpool import WarmPool, PoolStatus
+>>> pool = WarmPool(max_tasks=100, keep_spare=True)
 >>> result = pool.run(my_func, timeout=10.0, x=42)
 >>> pool.status is PoolStatus.READY
 True
@@ -11,10 +11,10 @@ True
 
 Memory-based rotation:
 
->>> pool = PoolWithTimeout(max_memory=500 * 1024 * 1024)
+>>> pool = WarmPool(max_memory=500 * 1024 * 1024)
 """
 
 from ._exceptions import ProcessPoolExhausted
-from .pool import PoolStatus, PoolWithTimeout
+from .pool import PoolStatus, WarmPool
 
-__all__ = ["PoolStatus", "PoolWithTimeout", "ProcessPoolExhausted"]
+__all__ = ["PoolStatus", "WarmPool", "ProcessPoolExhausted"]
