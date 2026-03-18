@@ -30,13 +30,13 @@ def sleep_seconds(seconds=1.0):
     time.sleep(seconds)
 
 
-def raise_value_error(msg="test error"):
-    raise ValueError(msg)
+def raise_value_error(message="test error"):
+    raise ValueError(message)
 
 
-def log_message(msg="hello", level="INFO"):
-    lvl = getattr(logging, level, logging.INFO)
-    logging.getLogger("test.helper").log(lvl, msg)
+def log_message(message="hello", level="INFO"):
+    log_level = getattr(logging, level, logging.INFO)
+    logging.getLogger("test.helper").log(log_level, message)
 
 
 def log_with_exception():
@@ -48,6 +48,20 @@ def log_with_exception():
 
 def sleep_short(seconds=0.01):
     time.sleep(seconds)
+
+
+def warm_json():
+    import json  # noqa: F401
+
+
+def warm_json_xml():
+    import json  # noqa: F401
+    import xml  # noqa: F401
+
+
+def warm_numpy_scipy():
+    import numpy  # noqa: F401
+    import scipy.linalg  # noqa: F401
 
 
 def check_module_imported(module_name="json"):
@@ -77,21 +91,21 @@ def raise_unpicklable():
 _memory_holder = None
 
 
-def hung_worker_process(conn, warm_modules, log_level):
-    """Simulate a worker stuck in module import — never sends 'ready'.
+def hung_worker_process(connection, log_level):
+    """Simulate a worker stuck during warming — never sends 'ready'.
 
     Reproduces the scenario where GPU initialization deadlocks during
-    warm-module import (e.g. two subprocesses calling pollster::block_on
+    warming (e.g. two subprocesses calling pollster::block_on
     simultaneously).
     """
-    conn.close()
+    connection.close()
     time.sleep(3600)
 
 
-def allocate_memory(mb=100):
-    """Allocate ~mb megabytes of RSS that persists in the worker process."""
+def allocate_memory(megabytes=100):
+    """Allocate ~megabytes megabytes of RSS that persists in the worker process."""
     global _memory_holder
-    _memory_holder = bytearray(mb * 1024 * 1024)
+    _memory_holder = bytearray(megabytes * 1024 * 1024)
     return len(_memory_holder)
 
 

@@ -37,11 +37,11 @@ def hang_after_log():
     import logging
     import time
 
-    tic = time.perf_counter()
+    start = time.perf_counter()
     import numpy as np  # already warm — no import cost
 
     logging.getLogger("worker.task").warning(
-        f"I'm inside the process! numpy={np.__version__} and it took {time.perf_counter() - tic:0.4f}s to import because we warmed up!"
+        f"I'm inside the process! numpy={np.__version__} and it took {time.perf_counter() - start:0.4f}s to import because we warmed up!"
     )
     time.sleep(86400)  # 24 hours — will be killed long before this
 
@@ -60,21 +60,27 @@ def add(a=0, b=0):
     return a + b
 
 
+def warm_imports():
+    import numpy  # noqa: F401
+    import scipy  # noqa: F401
+    import scipy.linalg  # noqa: F401
+
+
 def main():
     log.info("creating pool with keep_spare=True, warming numpy+scipy")
     pool = PoolWithTimeout(
-        warm_modules=["numpy", "scipy.linalg", "scipy"],
+        warming=warm_imports,
         max_tasks=50,
         keep_spare=True,
     )
 
     # ── Scenario 1: kill a worker hanging in Python sleep ──
     log.info("dispatching hang_after_log() with 1s timeout …")
-    t0 = time.perf_counter()
+    start = time.perf_counter()
     try:
         pool.run(hang_after_log, timeout=1.0)
     except TimeoutError:
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - start
         log.info(f"worker killed after {elapsed:.2f}s (TimeoutError)")
 
     # Pool recovered — prove it
@@ -83,11 +89,11 @@ def main():
 
     # ── Scenario 2: kill a worker stuck in C code (LAPACK eigh) ──
     log.info("dispatching eigh_huge(5000) — stuck in LAPACK C, 0.5s timeout …")
-    t0 = time.perf_counter()
+    start = time.perf_counter()
     try:
         pool.run(eigh_huge, timeout=0.5, n=5000)
     except TimeoutError:
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - start
         log.info(f"LAPACK worker killed after {elapsed:.2f}s (TimeoutError)")
 
     # Pool recovered again

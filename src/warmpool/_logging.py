@@ -22,13 +22,13 @@ class PipeHandler(logging.Handler):
 
     Parameters
     ----------
-    conn
+    connection
         The child-side :class:`~multiprocessing.connection.Connection`.
     """
 
-    def __init__(self, conn: Connection):
+    def __init__(self, connection: Connection):
         super().__init__()
-        self.conn = conn
+        self.connection = connection
 
     def emit(self, record: logging.LogRecord) -> None:
         """Serialize *record* to a dict and send it over the pipe.
@@ -50,7 +50,7 @@ class PipeHandler(logging.Handler):
                 entry["exception"] = "".join(
                     traceback.format_exception(*record.exc_info)
                 )
-            self.conn.send(("log", entry, {}))
+            self.connection.send(("log", entry, {}))
         except Exception:
             pass
 
@@ -71,10 +71,10 @@ def forward_subprocess_log(
     if logger is None:
         logger = logging.getLogger("warmpool.subprocess")
     level = getattr(logging, payload.get("level", "INFO"), logging.INFO)
-    msg = payload.get("message", "")
+    message = payload.get("message", "")
     extra = {
         k: v
         for k, v in payload.items()
         if k not in ("level", "message", "levelname", "levelno")
     }
-    logger.log(level, msg, extra=extra)
+    logger.log(level, message, extra=extra)

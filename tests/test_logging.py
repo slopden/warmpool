@@ -10,15 +10,15 @@ from ._helpers import log_message, log_with_exception
 
 class TestPipeHandler:
     def test_sends_structured_dict(self):
-        parent_conn, child_conn = Pipe()
-        handler = PipeHandler(child_conn)
+        parent_connection, child_connection = Pipe()
+        handler = PipeHandler(child_connection)
         logger = logging.getLogger("test.pipe")
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
         try:
             logger.info("hello world")
-            assert parent_conn.poll(timeout=1.0)
-            tag, payload, meta = parent_conn.recv()
+            assert parent_connection.poll(timeout=1.0)
+            tag, payload, meta = parent_connection.recv()
             assert tag == "log"
             assert meta == {}
             assert payload["level"] == "INFO"
@@ -28,12 +28,12 @@ class TestPipeHandler:
             assert "process_id" in payload
         finally:
             logger.removeHandler(handler)
-            parent_conn.close()
-            child_conn.close()
+            parent_connection.close()
+            child_connection.close()
 
     def test_exception_info(self):
-        parent_conn, child_conn = Pipe()
-        handler = PipeHandler(child_conn)
+        parent_connection, child_connection = Pipe()
+        handler = PipeHandler(child_connection)
         logger = logging.getLogger("test.pipe.exc")
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
@@ -42,17 +42,17 @@ class TestPipeHandler:
                 raise RuntimeError("kaboom")
             except RuntimeError:
                 logger.exception("caught it")
-            tag, payload, _ = parent_conn.recv()
+            tag, payload, _ = parent_connection.recv()
             assert "exception" in payload
             assert "kaboom" in payload["exception"]
         finally:
             logger.removeHandler(handler)
-            parent_conn.close()
-            child_conn.close()
+            parent_connection.close()
+            child_connection.close()
 
     def test_levels(self):
-        parent_conn, child_conn = Pipe()
-        handler = PipeHandler(child_conn)
+        parent_connection, child_connection = Pipe()
+        handler = PipeHandler(child_connection)
         logger = logging.getLogger("test.pipe.levels")
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)
@@ -60,14 +60,14 @@ class TestPipeHandler:
             for level_name in ("DEBUG", "INFO", "WARNING", "ERROR"):
                 logger.log(getattr(logging, level_name), f"{level_name} msg")
             received = []
-            while parent_conn.poll(timeout=0.5):
-                _, payload, _ = parent_conn.recv()
+            while parent_connection.poll(timeout=0.5):
+                _, payload, _ = parent_connection.recv()
                 received.append(payload["level"])
             assert received == ["DEBUG", "INFO", "WARNING", "ERROR"]
         finally:
             logger.removeHandler(handler)
-            parent_conn.close()
-            child_conn.close()
+            parent_connection.close()
+            child_connection.close()
 
 
 class TestForwardSubprocessLog:
@@ -111,7 +111,7 @@ class TestIntegrationLogs:
             pool = PoolWithTimeout(max_tasks=50, keep_spare=False)
             try:
                 with caplog.at_level(logging.DEBUG, logger="warmpool.subprocess"):
-                    pool.run(log_message, 5.0, msg="hello from child")
+                    pool.run(log_message, 5.0, message="hello from child")
                 assert any("hello from child" in r.message for r in caplog.records)
             finally:
                 pool.shutdown()
