@@ -67,7 +67,7 @@ def test_memory_both_limits_absolute_triggers():
 
 
 def test_memory_default_no_check():
-    """Default (None/None) never rotates even with high RSS."""
+    """Default max_memory_percent=0.35 doesn't rotate with small RSS."""
     pool = PoolWithTimeout(max_tasks=50, keep_spare=True)
     try:
         pid1 = pool.run(get_pid, 5.0)
@@ -91,7 +91,7 @@ def test_last_memory_rss_populated():
 
 def test_last_memory_rss_none_when_disabled():
     """last_memory_rss is None when memory checking is off."""
-    pool = PoolWithTimeout(max_tasks=50, keep_spare=True)
+    pool = PoolWithTimeout(max_tasks=50, keep_spare=True, max_memory_percent=None)
     try:
         pool.run(add, 5.0, a=1, b=2)
         assert pool.last_memory_rss is None

@@ -153,7 +153,7 @@ class PoolWithTimeout:
         keep_spare: bool = True,
         ready_timeout: float = 30.0,
         max_memory: int | None = None,
-        max_memory_percent: float | None = None,
+        max_memory_percent: float | None = 0.35,
         warming: Callable | None = None,
         init_retries: int = 1,
     ) -> None:
