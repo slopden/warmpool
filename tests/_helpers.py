@@ -83,8 +83,6 @@ def raise_unpicklable():
     class _Unpicklable(Exception):
         """Locally defined so pickle can't resolve the class."""
 
-        pass
-
     raise _Unpicklable("this can't be pickled")
 
 
@@ -107,6 +105,21 @@ def allocate_memory(megabytes=100):
     global _memory_holder
     _memory_holder = bytearray(megabytes * 1024 * 1024)
     return len(_memory_holder)
+
+
+def write_marker():
+    """Cleanup hook for kill-path tests: write 'ran' to the env-pointed file.
+
+    Used as the WarmPool's ``cleanup`` parameter: the worker registers
+    it via ``atexit``, so the marker file appears iff atexit actually
+    ran during shutdown. Path is passed via env (not closure) so it
+    survives the spawn-context pickle.
+    """
+    path = os.environ.get("WARMPOOL_TEST_MARKER")
+    if not path:
+        return
+    with open(path, "w") as f:
+        f.write("ran")
 
 
 def scipy_eigh_huge(n=5000):

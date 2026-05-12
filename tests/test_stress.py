@@ -1,5 +1,4 @@
 import pytest
-
 from warmpool import WarmPool
 
 from ._helpers import add, sleep_forever

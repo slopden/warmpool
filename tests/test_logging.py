@@ -1,9 +1,8 @@
 import logging
 from multiprocessing import Pipe
 
-
-from warmpool._logging import PipeHandler, forward_subprocess_log
 from warmpool import WarmPool
+from warmpool._logging import PipeHandler, forward_subprocess_log
 
 from ._helpers import log_message, log_with_exception
 

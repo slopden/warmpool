@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A single-worker subprocess pool that can actually kill C extensions.</strong>
+  <strong>A single-worker subprocess pool that can kill C extensions.</strong>
 </p>
 
 <p align="center">

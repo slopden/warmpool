@@ -13,12 +13,14 @@ import atexit
 import enum
 import logging
 import multiprocessing
+import threading
 import time
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from multiprocessing import Pipe, Process
 from multiprocessing.connection import Connection
-from typing import Any, Callable, NoReturn
+from typing import Any, NoReturn
 
 import psutil
 
@@ -30,10 +32,11 @@ log = logging.getLogger(__name__)
 
 # Seconds to wait when polling a pipe for data.
 _POLL_TIMEOUT = 0.1
-# Seconds to wait for a worker to join after a graceful shutdown signal.
-_JOIN_TIMEOUT = 0.5
-# Seconds to wait for a process tree to die after SIGKILL.
-_KILL_WAIT = 1.0
+# Seconds the cooperative sentinel path waits for a clean exit before
+# falling through to SIGTERM. Sized to allow the worker's `atexit`
+# hooks to run, which can take seconds for hooks that release external
+# resources (devices, locks, queued background work).
+_JOIN_TIMEOUT = 5.0
 
 _active_pools: weakref.WeakSet[WarmPool] = weakref.WeakSet()
 
@@ -133,6 +136,12 @@ class WarmPool:
         Optional callable invoked once per worker on startup (e.g. to
         pre-import modules).  Its return value is available via
         :attr:`init_result`.
+    cleanup
+        Optional callable registered via ``atexit`` in each worker.
+        Fires on clean SIGTERM exit, before Python module teardown.
+        Use it to release process-level resources that would otherwise
+        leak when the OS reaps the process (open device handles,
+        external locks, queued background work).
     max_tasks
         Maximum tasks a single worker may handle before rotation.
     keep_spare
@@ -143,8 +152,15 @@ class WarmPool:
     max_memory
         Maximum RSS in bytes before the worker is rotated.
     max_memory_percent
-        Maximum RSS as a fraction of total system memory (0.0–1.0)
+        Maximum RSS as a fraction of total system memory (0.0 - 1.0)
         before the worker is rotated.
+    timeout_graceful
+        Seconds between SIGTERM and SIGKILL in the kill path. Sized to
+        let the worker's SIGTERM handler complete its ``atexit`` hooks.
+        On the `pool.run` timeout path the kill runs in a daemon
+        thread, so this does not block the caller.
+    timeout
+        Seconds to wait for the process tree to die after SIGKILL.
     """
 
     def __init__(
@@ -155,14 +171,20 @@ class WarmPool:
         max_memory: int | None = None,
         max_memory_percent: float | None = 0.35,
         warming: Callable | None = None,
+        cleanup: Callable | None = None,
         init_retries: int = 1,
+        timeout_graceful: float = 10.0,
+        timeout: float = 1.0,
     ) -> None:
         self._max_tasks = max_tasks
         self._keep_spare = keep_spare
         self._ready_timeout = ready_timeout
         self._warming = warming
+        self._cleanup = cleanup
         self._max_memory = max_memory
         self._init_retries = init_retries
+        self._timeout_graceful = timeout_graceful
+        self._timeout = timeout
         # Pre-compute absolute byte limit from percentage (avoid per-task psutil call).
         if max_memory_percent is not None:
             clamped = max(0.0, min(1.0, max_memory_percent))
@@ -178,6 +200,16 @@ class WarmPool:
         # Pool-level cache so elapsed_ms survives rotation.
         self._last_elapsed_ms: int | None = None
         self._last_memory_rss: int | None = None
+        # Bail after this many back-to-back `_wait_for_ready` failures
+        # rather than respawning indefinitely against whatever is
+        # wedging worker startup. Caller interprets the cause.
+        self._consecutive_ready_failures = 0
+        self._max_consecutive_ready_failures = 2
+
+        # Background-kill threads for workers killed off the critical
+        # path (e.g. on `run()` timeout). Joined on `shutdown()` so the
+        # workers don't outlive the parent process.
+        self._kill_threads: list[threading.Thread] = []
 
         _active_pools.add(self)
 
@@ -307,13 +339,22 @@ class WarmPool:
         try:
             result = self._wait_for_result(handle, function, timeout)
         except (TimeoutError, ProcessPoolExhausted):
-            self._kill_worker(handle)
+            # Worker is wedged (likely a C-extension ignoring signals,
+            # e.g. a deadlocked GPU driver or LAPACK). Promote the
+            # already-warm spare first so the caller's next run() is
+            # instant, then SIGTERM/SIGKILL the wedged worker in a
+            # daemon thread. The cooperative pipe-sentinel is skipped:
+            # cooperation has already failed by definition, and writing
+            # `None` into a pipe a wedged worker isn't reading is just
+            # 5s of dead time.
+            doomed = handle
             self._active = None
             if self._keep_spare:
                 try:
                     self._promote_spare()
                 except Exception:
                     log.warning("Failed to promote spare after error", exc_info=True)
+            self._start_background_kill(doomed)
             raise
 
         # Persist elapsed_ms at pool level so it survives rotation.
@@ -363,6 +404,14 @@ class WarmPool:
         if self._spare is not None:
             self._shutdown_worker(self._spare)
             self._spare = None
+        # Wait for any background kill threads so their workers don't
+        # outlive the parent process. Each kill is bounded by
+        # `timeout_graceful + timeout`; daemon threads also die on
+        # interpreter exit as a last resort.
+        join_budget = self._timeout_graceful + self._timeout
+        for thread in self._kill_threads:
+            thread.join(timeout=join_budget)
+        self._kill_threads.clear()
 
     # ------------------------------------------------------------------
     # Worker lifecycle
@@ -386,12 +435,12 @@ class WarmPool:
             context = multiprocessing.get_context("spawn")
             process = context.Process(
                 target=_worker_process,
-                args=(child_connection, log_level, self._warming),
+                args=(child_connection, log_level, self._warming, self._cleanup),
             )
         except RuntimeError:
             process = Process(
                 target=_worker_process,
-                args=(child_connection, log_level, self._warming),
+                args=(child_connection, log_level, self._warming, self._cleanup),
             )
 
         process.start()
@@ -405,10 +454,25 @@ class WarmPool:
         if block_ready:
             if not self._wait_for_ready(handle):
                 self._kill_worker(handle)
+                self._consecutive_ready_failures += 1
+                if (
+                    self._consecutive_ready_failures
+                    >= self._max_consecutive_ready_failures
+                ):
+                    raise ProcessPoolExhausted(
+                        f"{self._consecutive_ready_failures} consecutive "
+                        f"worker startups failed to send the ready signal "
+                        f"(each exceeded {self._ready_timeout}s in "
+                        "`warming`). Something is wedging worker startup "
+                        "at the OS/driver/import level — WarmPool cannot "
+                        "diagnose which; the caller should interpret in "
+                        "its own context and recover."
+                    )
                 raise RuntimeError(
                     f"Worker pid={handle.process.pid} failed to become ready "
                     f"within {self._ready_timeout}s"
                 )
+            self._consecutive_ready_failures = 0
 
         return handle
 
@@ -594,8 +658,34 @@ class WarmPool:
                 return
         self._close_worker(handle)
 
+    def _start_background_kill(self, handle: WorkerHandle) -> None:
+        """Run `_kill_worker` in a daemon thread.
+
+        Used on the `run()` timeout path so the caller isn't blocked on
+        SIGTERM grace for a worker that's likely wedged in C code that
+        won't service signals anyway. The spare has already been
+        promoted by the time this runs, so the kill is purely
+        background bookkeeping.
+        """
+        # Prune finished threads so the list doesn't grow unbounded
+        # across the pool's lifetime.
+        self._kill_threads = [t for t in self._kill_threads if t.is_alive()]
+        pid = handle.process.pid
+        thread = threading.Thread(
+            target=self._kill_worker,
+            args=(handle,),
+            daemon=True,
+            name=f"warmpool-kill-pid{pid}",
+        )
+        thread.start()
+        self._kill_threads.append(thread)
+
     def _kill_worker(self, handle: WorkerHandle) -> None:
         """SIGTERM then SIGKILL the worker and its entire process tree.
+
+        Logs a `+Nms` timeline so callers can see whether the worker
+        exited cleanly on SIGTERM or had to be SIGKILLed after
+        `timeout_graceful` elapsed.
 
         Parameters
         ----------
@@ -605,16 +695,33 @@ class WarmPool:
         if not handle.process.is_alive():
             self._close_worker(handle)
             return
+        pid = handle.process.pid
+        t0 = time.perf_counter()
+
+        def ms() -> int:
+            return int((time.perf_counter() - t0) * 1000)
+
         try:
-            worker = psutil.Process(handle.process.pid)
+            worker = psutil.Process(pid)
             children = worker.children(recursive=True)
             for child in children:
                 child.terminate()
             worker.terminate()
-            gone, alive = psutil.wait_procs(children + [worker], timeout=0.1)
-            for remaining in alive:
-                remaining.kill()
-            psutil.wait_procs(alive, timeout=_KILL_WAIT)
+            log.info(f"worker pid={pid} SIGTERM (+{ms()}ms)")
+            gone, alive = psutil.wait_procs(
+                children + [worker], timeout=self._timeout_graceful
+            )
+            if not alive:
+                log.info(f"worker pid={pid} exited cleanly (+{ms()}ms)")
+            else:
+                for remaining in alive:
+                    remaining.kill()
+                log.info(
+                    f"worker pid={pid} SIGKILL after "
+                    f"{self._timeout_graceful}s grace (+{ms()}ms)"
+                )
+                psutil.wait_procs(alive, timeout=self._timeout)
+                log.info(f"worker pid={pid} process tree dead (+{ms()}ms)")
         except (psutil.NoSuchProcess, ProcessLookupError):
             pass
         except psutil.TimeoutExpired:

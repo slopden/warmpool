@@ -47,9 +47,7 @@ class PipeHandler(logging.Handler):
                 "process_id": record.process,
             }
             if record.exc_info and record.exc_info[1] is not None:
-                entry["exception"] = "".join(
-                    traceback.format_exception(*record.exc_info)
-                )
+                entry["exception"] = "".join(traceback.format_exception(*record.exc_info))
             self.connection.send(("log", entry, {}))
         except Exception:
             pass

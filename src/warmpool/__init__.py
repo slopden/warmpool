@@ -17,4 +17,4 @@ Memory-based rotation:
 from ._exceptions import ProcessPoolExhausted
 from .pool import PoolStatus, WarmPool
 
-__all__ = ["PoolStatus", "WarmPool", "ProcessPoolExhausted"]
+__all__ = ["PoolStatus", "ProcessPoolExhausted", "WarmPool"]

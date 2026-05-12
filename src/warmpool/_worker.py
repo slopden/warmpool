@@ -8,18 +8,42 @@ receive-execute-send loop until the parent sends a shutdown sentinel
 
 from __future__ import annotations
 
+import atexit
 import logging
+import os
+import signal
 import time
+from collections.abc import Callable
 from multiprocessing.connection import Connection
-from typing import Callable
 
 from ._logging import PipeHandler
+
+
+def _sigterm_handler(_signum: int, _frame: object) -> None:
+    """Run ``atexit`` hooks then exit immediately on SIGTERM.
+
+    Linux's default SIGTERM disposition terminates the process
+    *without* running ``atexit``, which would skip any user-registered
+    ``cleanup`` callable — exactly the path that leaves external
+    resources (device handles, locks, queues) half-released.
+
+    ``sys.exit(0)`` is not a reliable substitute: when the worker is
+    blocked in ``connection.poll(timeout=None)`` (``epoll_wait``), the
+    ``SystemExit`` raised from this handler does not reliably unwind
+    out of that C frame on every Python version. Running ``atexit``
+    hooks explicitly and then ``os._exit`` gives the same observable
+    behavior with no dependency on the interpreter's
+    signal-out-of-C-call machinery.
+    """
+    atexit._run_exitfuncs()
+    os._exit(0)
 
 
 def _worker_process(
     connection: Connection,
     log_level: int = logging.DEBUG,
     warming: Callable | None = None,
+    cleanup: Callable | None = None,
 ) -> None:
     """Entry point for the worker subprocess.
 
@@ -30,18 +54,32 @@ def _worker_process(
     warming
         Optional callable invoked once on startup (e.g. to pre-import
         modules).  Its return value is sent to the parent.
+    cleanup
+        Optional callable registered via ``atexit`` so it runs on
+        SIGTERM exit (before Python module teardown). Use for
+        releasing process-level resources that would otherwise leak
+        when the OS reaps the worker.
 
     Notes
     -----
     1. Replaces all root-logger handlers with a :class:`PipeHandler` so
        every log record is forwarded to the parent as a structured dict.
-    2. Calls *warming* if provided.
-    3. Sends a ``("ready", init_result, {})`` message, then enters the task loop.
+    2. Installs a SIGTERM handler that runs ``atexit`` then ``os._exit``,
+       so cleanup hooks fire even when the pool escalates to a kill.
+    3. Registers *cleanup* with ``atexit`` before *warming* runs — so
+       cleanup still fires if *warming* itself errors out.
+    4. Calls *warming* if provided.
+    5. Sends a ``("ready", init_result, {})`` message, then enters the task loop.
     """
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(PipeHandler(connection))
     root.setLevel(log_level)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
+    if cleanup is not None:
+        atexit.register(cleanup)
 
     init_result = warming() if warming is not None else None
     connection.send(("ready", init_result, {}))

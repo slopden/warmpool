@@ -4,7 +4,6 @@ from multiprocessing import Pipe
 
 import psutil
 import pytest
-
 from warmpool import WarmPool
 from warmpool.pool import WorkerHandle
 
@@ -96,9 +95,7 @@ def test_spare_hung_during_import_is_killed():
         pool._shutdown_worker(pool._spare)
         parent_connection, child_connection = Pipe()
         context = multiprocessing.get_context("spawn")
-        process = context.Process(
-            target=hung_worker_process, args=(child_connection, 10)
-        )
+        process = context.Process(target=hung_worker_process, args=(child_connection, 10))
         process.start()
         hung_pid = process.pid
         pool._spare = WorkerHandle(
@@ -134,9 +131,7 @@ def test_wait_for_ready_returns_false_on_timeout():
     try:
         parent_connection, child_connection = Pipe()
         context = multiprocessing.get_context("spawn")
-        process = context.Process(
-            target=hung_worker_process, args=(child_connection, 10)
-        )
+        process = context.Process(target=hung_worker_process, args=(child_connection, 10))
         process.start()
         handle = WorkerHandle(
             process=process,

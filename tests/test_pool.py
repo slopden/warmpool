@@ -1,8 +1,8 @@
 import os
+import time
 
 import pytest
-
-from warmpool import PoolStatus, WarmPool, ProcessPoolExhausted
+from warmpool import PoolStatus, ProcessPoolExhausted, WarmPool
 
 from ._helpers import (
     add,
@@ -42,9 +42,16 @@ def test_hard_kill_verified(pool):
     assert isinstance(child_pid, int)
     with pytest.raises(TimeoutError, match="sleep_forever"):
         pool.run(sleep_forever, 0.5)
-    # Worker should be dead
-    with pytest.raises(OSError):
-        os.kill(child_pid, 0)
+    # Kill is async (runs in a daemon thread off the run() critical
+    # path); poll for the worker to actually die.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except OSError:
+            return
+        time.sleep(0.05)
+    pytest.fail(f"Worker pid={child_pid} still alive 2s after timeout")
 
 
 def test_error_propagation(pool):
