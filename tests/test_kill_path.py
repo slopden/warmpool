@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import signal
-import sys
 import time
 from pathlib import Path
 
@@ -27,15 +26,6 @@ from warmpool import WarmPool
 from warmpool._exceptions import ProcessPoolExhausted
 
 from ._helpers import get_pid, sleep_forever, write_marker
-
-# `cleanup` relies on a SIGTERM handler running `atexit` before exit.
-# Windows has no equivalent: `os.kill(pid, SIGTERM)` and
-# `psutil.Process.terminate()` both call `TerminateProcess`, which
-# stops the process without delivering signals or running `atexit`.
-_posix_signals_only = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="cleanup-on-kill requires POSIX SIGTERM/atexit semantics",
-)
 
 
 def _wait_for_marker(marker_path: Path, timeout: float = 5.0) -> bool:
@@ -61,7 +51,6 @@ def _wait_for_marker(marker_path: Path, timeout: float = 5.0) -> bool:
     return False
 
 
-@_posix_signals_only
 def test_cleanup_runs_on_sigterm(tmp_path, monkeypatch):
     """Direct SIGTERM to an idle worker must invoke atexit cleanup.
 
@@ -95,7 +84,6 @@ def test_cleanup_runs_on_sigterm(tmp_path, monkeypatch):
         pool.shutdown()
 
 
-@_posix_signals_only
 def test_cleanup_runs_on_timeout_kill(tmp_path, monkeypatch):
     """The pool's timeout path (background SIGTERM → atexit) runs cleanup.
 

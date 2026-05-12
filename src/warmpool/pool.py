@@ -141,9 +141,7 @@ class WarmPool:
         Fires on clean SIGTERM exit, before Python module teardown.
         Use it to release process-level resources that would otherwise
         leak when the OS reaps the process (open device handles,
-        external locks, queued background work). POSIX only: Windows
-        uses ``TerminateProcess``, which skips ``atexit`` — cleanup
-        only runs on cooperative shutdown there.
+        external locks, queued background work).
     max_tasks
         Maximum tasks a single worker may handle before rotation.
     keep_spare
